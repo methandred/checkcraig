@@ -1,0 +1,93 @@
+import smtplib
+import csv
+import time
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# your gmail credentials
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = "your_email@gmail.com"
+SENDER_PASSWORD = "your_app_password"  # use app password, not your main gmail password
+
+# input files
+EMAILS_FILE = "emails.csv"      # csv with one column: email
+MESSAGE_FILE = "message.txt"    # first line = subject, rest = body
+
+# delay between sends to avoid spam filters
+DELAY_MIN = 3
+DELAY_MAX = 7
+
+
+def load_emails(filepath):
+    emails = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            email = row.get("email", "").strip()
+            if email:
+                emails.append(email)
+    return emails
+
+
+def load_message(filepath):
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    # first line is subject, everything after is body
+    subject = lines[0].strip()
+    body = "\n".join(lines[2:]).strip()  # skip blank line after subject
+
+    return subject, body
+
+
+def send_email(smtp, to_address, subject, body):
+    msg = MIMEMultipart()
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = to_address
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    smtp.sendmail(SENDER_EMAIL, to_address, msg.as_string())
+
+
+def main():
+    print("loading files...")
+
+    emails = load_emails(EMAILS_FILE)
+    subject, body = load_message(MESSAGE_FILE)
+
+    print(f"emails loaded: {len(emails)}")
+    print(f"subject: {subject}")
+    print(f"preview: {body[:60]}...")
+    print()
+
+    sent = 0
+    failed = 0
+
+    # connect once and reuse the session for all sends
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+        smtp.starttls()
+        smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
+        print("connected to smtp, starting send...\n")
+
+        for i, email in enumerate(emails, start=1):
+            try:
+                send_email(smtp, email, subject, body)
+                print(f"[{i}/{len(emails)}] sent -> {email}")
+                sent += 1
+            except Exception as e:
+                print(f"[{i}/{len(emails)}] failed -> {email} | reason: {e}")
+                failed += 1
+
+            # skip delay after last email
+            if i < len(emails):
+                delay = random.uniform(DELAY_MIN, DELAY_MAX)
+                time.sleep(delay)
+
+    print(f"\ndone. sent: {sent}, failed: {failed}")
+
+
+if __name__ == "__main__":
+    main()
