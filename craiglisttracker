@@ -1,0 +1,154 @@
+import requests
+from bs4 import BeautifulSoup
+import csv
+import time
+import random
+from datetime import datetime
+import os
+ 
+# search settings
+SEARCH_URL = "https://sfbay.craigslist.org/search/jjj"
+AD_TITLE_KEYWORD = "Marketing Manager"
+OUTPUT_FILE = "ad_positions.csv"
+MAX_PAGES = 5
+ 
+# random delay between requests to avoid getting blocked
+DELAY_MIN = 2
+DELAY_MAX = 5
+ 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+ 
+ 
+def get_page(url):
+    # try to load the page, return None if something goes wrong
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        return BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        print(f"request failed: {e}")
+        return None
+ 
+ 
+def find_position(keyword, max_pages):
+    position = 0
+    per_page = 120  # craigslist default
+ 
+    for page in range(max_pages):
+        offset = page * per_page
+        url = f"{SEARCH_URL}?s={offset}"
+        print(f"checking page {page + 1}...")
+ 
+        soup = get_page(url)
+        if not soup:
+            break
+ 
+        listings = soup.select("li.cl-search-result")
+ 
+        if not listings:
+            # html structure might have changed
+            print("no listings found, craigslist may have updated their markup")
+            break
+ 
+        for item in listings:
+            position += 1
+            title_el = item.select_one(".cl-app-anchor .label")
+ 
+            if not title_el:
+                continue
+ 
+            title = title_el.get_text(strip=True)
+ 
+            if keyword.lower() in title.lower():
+                link = item.select_one("a.cl-app-anchor")
+                ad_url = link["href"] if link else "n/a"
+ 
+                return {
+                    "found": True,
+                    "position": position,
+                    "title": title,
+                    "url": ad_url,
+                    "page": page + 1,
+                }
+ 
+        # wait a bit before next page
+        delay = random.uniform(DELAY_MIN, DELAY_MAX)
+        print(f"waiting {delay:.1f}s...")
+        time.sleep(delay)
+ 
+    return {"found": False, "position": None, "title": None, "url": None, "page": None}
+ 
+ 
+def get_last_position(filepath):
+    # read last saved position to compare with current run
+    if not os.path.exists(filepath):
+        return None
+ 
+    with open(filepath, "r", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+ 
+    if not rows:
+        return None
+ 
+    val = rows[-1].get("position")
+    if val and val != "None":
+        return int(val)
+    return None
+ 
+ 
+def save_result(data, filepath):
+    fields = ["timestamp", "position", "title", "url", "page", "keyword"]
+    file_exists = os.path.exists(filepath)
+ 
+    with open(filepath, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(data)
+ 
+    print(f"saved to {filepath}")
+ 
+ 
+def main():
+    print(f"starting tracker, keyword: '{AD_TITLE_KEYWORD}'")
+ 
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    last_pos = get_last_position(OUTPUT_FILE)
+ 
+    result = find_position(AD_TITLE_KEYWORD, MAX_PAGES)
+ 
+    if result["found"]:
+        pos = result["position"]
+        print(f"\nfound at position #{pos}")
+        print(f"title: {result['title']}")
+        print(f"url: {result['url']}")
+ 
+        # show how position changed since last run
+        if last_pos:
+            delta = last_pos - pos
+            if delta > 0:
+                print(f"moved up by {delta} (was #{last_pos})")
+            elif delta < 0:
+                print(f"moved down by {abs(delta)} (was #{last_pos})")
+            else:
+                print(f"no change (still #{last_pos})")
+    else:
+        pos = None
+        print(f"\nnot found in first {MAX_PAGES} pages")
+ 
+    save_result({
+        "timestamp": timestamp,
+        "position": pos,
+        "title": result["title"],
+        "url": result["url"],
+        "page": result["page"],
+        "keyword": AD_TITLE_KEYWORD,
+    }, OUTPUT_FILE)
+ 
+ 
+if __name__ == "__main__":
+    main()
+ 
